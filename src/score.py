@@ -5,12 +5,16 @@ from itertools import product
 import numpy as np
 import pandas as pd
 
-# Baseline weights for the four risk components. Must sum to 1.0.
+# Baseline weights for the three risk components. Must sum to 1.0.
+# vru_exposure is no longer a separate term: it already scales bio_risk
+# (consequence x exposure), and carrying it twice both double-counted the
+# signal and compressed the score's usable range. bio_risk gets the largest
+# weight because "lethal speeds where unprotected people are" is the core
+# Safe System concern; the two limit-misalignment signals split the rest.
 BASE_WEIGHTS = {
     "speed_gap_norm": 0.30,
-    "road_mismatch": 0.25,
-    "bio_risk": 0.30,
-    "vru_exposure": 0.15,
+    "road_mismatch": 0.30,
+    "bio_risk": 0.40,
 }
 
 RISK_TIER_THRESHOLDS = [(70, "High risk"), (40, "Medium risk")]
@@ -18,9 +22,15 @@ INSUFFICIENT_DATA_TIER = "Insufficient data"
 
 
 def calculate_score(gdf, weights=BASE_WEIGHTS):
-    """Return the 0-100 speed_safety_score series for a given set of component weights."""
+    """Return the 0-100 speed_safety_score series for a given set of component weights.
+
+    confidence_weight deliberately does NOT multiply the score: it flags
+    data uncertainty on long segments and is reported alongside the score,
+    but discounting risk for uncertainty made dangerous long segments
+    invisible in the rankings.
+    """
     weighted_sum = sum(gdf[col] * w for col, w in weights.items())
-    return (weighted_sum * gdf["confidence_weight"] * 100).round(1)
+    return (weighted_sum * 100).round(1)
 
 
 def assign_risk_tier(score):

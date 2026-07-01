@@ -18,7 +18,14 @@ SAFE_SYSTEM_SPEED_RANGES = {
     "unclassified": (20, 40),
 }
 
-# Fatality-probability lookup for a pedestrian/cyclist struck at a given posted speed.
+# Absolute anchors that map raw km/h quantities onto 0-1 component scales.
+# Fixed anchors (rather than dataset-relative min-max scaling) keep a given
+# score meaning the same thing in every country the pipeline is applied to,
+# and stop a single extreme outlier from compressing everyone else's score.
+SPEED_GAP_FULL_SIGNAL_KMH = 20  # driving 20+ km/h over the limit = full-strength signal
+ROAD_MISMATCH_FULL_SIGNAL_KMH = 30  # posted 30+ km/h above the class ceiling = full-strength signal
+
+# Fatality-probability lookup for a pedestrian/cyclist struck at a given speed.
 BIO_RISK_BANDS = [
     (20, 0.05),
     (30, 0.10),
@@ -30,22 +37,32 @@ BIO_RISK_ABOVE_60 = 1.00
 
 
 def compute_speed_gap(gdf):
-    """Add speed_gap (F85 minus limit, clipped at 0) and its 0-1 normalised version."""
+    """Add speed_gap (F85 minus limit, clipped at 0) and its 0-1 anchored version.
+
+    speed_gap_norm saturates at SPEED_GAP_FULL_SIGNAL_KMH: a segment where
+    traffic runs 20+ km/h over the limit gets the full signal (1.0) no
+    matter what the worst segment in the dataset does. The previous min-max
+    scaling let one 88 km/h outlier compress a serious 20 km/h gap down to
+    0.23, and made scores non-comparable across datasets.
+    """
     gap = gdf["F85thPercentileSpeed"] - gdf["SpeedLimit"]
     gdf["speed_gap"] = gap.clip(lower=0)
-    scaler = MinMaxScaler()
-    gdf["speed_gap_norm"] = scaler.fit_transform(gdf[["speed_gap"]].fillna(0))
+    gdf["speed_gap_norm"] = (gdf["speed_gap"].fillna(0) / SPEED_GAP_FULL_SIGNAL_KMH).clip(upper=1.0)
     return gdf
 
 
 def compute_road_mismatch(gdf):
-    """Add road_mismatch: how far the posted limit exceeds the class's Safe System max, clipped at 1."""
+    """Add road_mismatch: km/h the posted limit exceeds the class's Safe System max, on a 0-1 anchored scale."""
     class_max = gdf["road_class"].map(lambda c: SAFE_SYSTEM_SPEED_RANGES.get(c, (np.nan, np.nan))[1])
     # A road is only "mismatched" when the posted limit is strictly above the
     # class ceiling. A limit below the ceiling (e.g. 55 km/h on a secondary
     # road capped at 60) is compliant and scores 0, not a positive value.
+    # The over-posting is scaled against a fixed 30 km/h anchor rather than
+    # the class ceiling itself: dividing by class_max capped the achievable
+    # value at ~0.5 for every real over-posting in the data, silently
+    # halving this component's weight in the final score.
     over = (gdf["SpeedLimit"] - class_max).clip(lower=0)
-    gdf["road_mismatch"] = (over / class_max).clip(upper=1.0)
+    gdf["road_mismatch"] = (over / ROAD_MISMATCH_FULL_SIGNAL_KMH).clip(upper=1.0)
     return gdf
 
 
@@ -119,14 +136,32 @@ def _bio_risk_for_speed(speed):
 
 
 def compute_bio_risk(gdf):
-    """Add bio_risk: speed-based fatality probability multiplied by vru_exposure."""
-    fatality_prob = gdf["SpeedLimit"].map(_bio_risk_for_speed)
+    """Add bio_risk: fatality probability at the exposure speed, scaled by vru_exposure.
+
+    The exposure speed is max(F85thPercentileSpeed, SpeedLimit) -- the speed
+    vulnerable road users are actually exposed to. Using the posted limit
+    alone understates the danger where real traffic runs well above it, and
+    using F85 alone misses limits that permit lethal speeds on roads where
+    traffic happens to be slow today. Multiplying by vru_exposure keeps the
+    component targeted at "lethal speeds where unprotected people are":
+    a fast rural motorway with nobody on foot is not a VRU risk.
+    """
+    exposure_speed = pd.concat(
+        [gdf["F85thPercentileSpeed"], gdf["SpeedLimit"]], axis=1
+    ).max(axis=1)
+    fatality_prob = exposure_speed.map(_bio_risk_for_speed)
     gdf["bio_risk"] = fatality_prob * gdf["vru_exposure"]
     return gdf
 
 
 def compute_confidence_weight(gdf):
-    """Add confidence_weight: 0.5 for segments longer than 10km, else 1.0."""
+    """Add confidence_weight: 0.5 for segments longer than 10km, else 1.0.
+
+    This is a data-confidence indicator (the speed sample may not represent
+    a very long segment), NOT a risk discount -- it no longer multiplies the
+    Speed Safety Score. Halving the score of long segments made genuinely
+    dangerous long roads invisible by conflating uncertainty with safety.
+    """
     gdf["confidence_weight"] = np.where(gdf["RoadLength_km"] > 10, 0.5, 1.0)
     return gdf
 

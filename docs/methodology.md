@@ -58,15 +58,18 @@ separate, off-by-default "Insufficient data" layer.
 
 ## Feature definitions
 
-- **`speed_gap`** = `max(F85thPercentileSpeed - SpeedLimit, 0)`, min-max
-  normalised to `speed_gap_norm`. Only positive gaps are a risk signal — a
-  segment where traffic travels *below* the limit gets 0, not a negative
-  score.
+- **`speed_gap`** = `max(F85thPercentileSpeed - SpeedLimit, 0)`.
+  `speed_gap_norm` = `min(speed_gap / 20, 1)` — an absolute anchor where
+  driving 20+ km/h over the limit is a full-strength signal. Only positive
+  gaps are a risk signal — a segment where traffic travels *below* the
+  limit gets 0, not a negative score.
 - **`road_mismatch`** compares the posted `SpeedLimit` against the Safe
   System speed range for its road class. It is only positive when the
   posted limit **exceeds** the class ceiling (motorway 110, trunk 90,
   primary 70, secondary 60, tertiary 50, residential 30, living_street 20,
-  unclassified 40), clipped at 1.0. **Note:** the brief's worked example
+  unclassified 40): `min(km/h over the ceiling / 30, 1)`, so a limit
+  posted 30+ km/h above its class ceiling is a full-strength signal.
+  **Note:** the brief's worked example
   claims a secondary road posted at 55 km/h is "5 km/h above" the 60 km/h
   secondary ceiling — that's arithmetically backwards (55 < 60). Per the
   stated definition, that case correctly scores `road_mismatch = 0`; this
@@ -82,12 +85,16 @@ separate, off-by-default "Insufficient data" layer.
   coarse proxy, especially for India, not a precise exposure model. If no
   helmet layer is supplied, the function falls back to `urban_flag` alone
   (see `compute_vru_exposure` in `src/features.py`).
-- **`bio_risk`** = a fatality-probability lookup on `SpeedLimit` (≤20: 0.05,
-  ≤30: 0.10, ≤40: 0.30, ≤50: 0.80, ≤60: 0.90, >60: 1.00), multiplied by
-  `vru_exposure`.
-- **`confidence_weight`** = 0.5 if `RoadLength_km > 10` else 1.0, down-weighting
-  long segments where a sparse point sample may not represent the whole
-  segment.
+- **`bio_risk`** = a fatality-probability lookup on the exposure speed
+  `max(F85thPercentileSpeed, SpeedLimit)` (≤20: 0.05, ≤30: 0.10, ≤40: 0.30,
+  ≤50: 0.80, ≤60: 0.90, >60: 1.00), multiplied by `vru_exposure`. Using the
+  higher of measured operating speed and posted limit captures both roads
+  where traffic already runs at lethal speeds and roads whose limit permits
+  them.
+- **`confidence_weight`** = 0.5 if `RoadLength_km > 10` else 1.0 — a
+  data-confidence *flag* for long segments where a sparse point sample may
+  not represent the whole segment. It is reported alongside the score but
+  no longer multiplies it (see "Score recalibration" below).
 - **`mapillary_url`** is built from the centroid of the two endpoint
   coordinates in `StreetImageLink` (the data guide describes this field as
   endpoint lon/lat pairs, not a sorted bounding box — but centroid averaging
@@ -112,10 +119,9 @@ separate, off-by-default "Insufficient data" layer.
 ```
 speed_safety_score = round(
     (0.30 * speed_gap_norm
-   + 0.25 * road_mismatch
-   + 0.30 * bio_risk
-   + 0.15 * vru_exposure)
-  * confidence_weight * 100,
+   + 0.30 * road_mismatch
+   + 0.40 * bio_risk)
+  * 100,
   1
 )
 ```
@@ -123,34 +129,69 @@ speed_safety_score = round(
 Risk tiers: High risk ≥ 70, Medium risk ≥ 40, Low risk < 40, Insufficient
 data for segments excluded by the reliability filter.
 
+Design decisions behind this formula (revised after a first iteration —
+see "Score recalibration" below):
+
+- **`vru_exposure` is not a separate term.** It already scales `bio_risk`
+  (consequence × exposure); carrying it twice double-counted the signal
+  and compressed the score's usable range. `bio_risk` gets the largest
+  weight because "lethal speeds where unprotected people are" is the core
+  Safe System concern; the two limit-misalignment signals split the rest.
+- **`confidence_weight` does not multiply the score.** Discounting risk for
+  data uncertainty made genuinely dangerous long segments invisible. It is
+  reported alongside the score as a data-confidence flag instead.
+- **All components sit on absolute anchors** (20 km/h over-limit gap and
+  30 km/h over-ceiling posting saturate their signals), so a given score
+  means the same thing in any country the pipeline is applied to —
+  a requirement for the challenge's scalability goal.
+
+## Score recalibration (why the formula changed)
+
+The first iteration produced **zero** High-risk and only 382 Medium-risk
+segments out of 14,546, with a maximum observed score of 53.3 — the 40/70
+tier thresholds were structurally unreachable. Component-level analysis
+found four compounding causes:
+
+1. `speed_gap_norm` was min-max scaled against the dataset maximum (an
+   88 km/h outlier), so a serious 20 km/h over-limit gap scored only 0.23
+   — and the score's meaning depended on the dataset it was computed in.
+2. `road_mismatch` divided the over-posting by the class ceiling, capping
+   the achievable value at ~0.5 for every real over-posting — silently
+   halving that component's weight.
+3. `vru_exposure` was double-counted (inside `bio_risk` and as its own
+   term) yet rarely approached 1.0, diluting both terms.
+4. `confidence_weight` halved the score of 2,778 segments (19%) for being
+   long — conflating data uncertainty with safety.
+
+The recalibrated formula fixes all four (absolute anchors, fixed 30 km/h
+mismatch denominator, exposure folded into `bio_risk` only, confidence as
+a flag). `bio_risk` also now evaluates the fatality probability at
+`max(F85, SpeedLimit)` — the speed VRUs are actually exposed to — rather
+than at the posted limit alone. The highest-scoring segments under the
+new formula are urban secondary/primary roads posted 30 km/h above their
+Safe System ceiling with 85th-percentile speeds of 104–110 km/h and high
+VRU exposure — exactly the profile the challenge asks to surface.
+
 ## Validation results (current run)
 
-- **Correlation with `RankedPercentile`: -0.21** (both countries
-  individually: India -0.12, Thailand -0.25). This is **negative**, contrary
-  to the brief's expectation of a positive correlation. Root cause:
-  `RankedPercentile` ranks segments by **travel volume share** (per the
-  Agilysis data guide: "allows presentation of roads by percentage
-  traffic"), not by safety risk. A busy, well-engineered motorway can carry
-  a large share of national travel while being comparatively safe (wide
-  lanes, good geometry, lower `bio_risk` at higher design speeds), while a
-  low-traffic rural secondary road posted above its Safe System range scores
-  high on risk but negligible on travel share. The two metrics are simply
-  measuring different things, and the negative correlation is being
-  reported here rather than masked.
-- **Risk tier distribution is lopsided**: 14,164 Low risk vs. 382 Medium
-  risk vs. **zero** High risk segments among the 14,546 reliable segments
-  (max score observed: 53.3, never reaching the 70 threshold). The fixed
-  0/40/70 thresholds, taken literally from the brief, do not suit this
-  formula's actual achievable range — `bio_risk` rarely reaches its
-  theoretical maximum because `vru_exposure` (which it's multiplied by) is
-  itself bounded by the 40/60 blend and rarely approaches 1.0. This is
-  reported as-is rather than re-calibrated; a follow-up iteration may want
-  to either rescale the score to use its full observed range or set
-  data-driven thresholds (e.g. tier cutoffs at observed percentiles) instead
-  of fixed absolute values.
-- **Sensitivity analysis**: 84 valid weight combinations (±0.10 per weight,
+- **Correlation with `RankedPercentile`: -0.01** (effectively
+  uncorrelated). `RankedPercentile` ranks segments by **travel volume
+  share** (per the Agilysis data guide: "allows presentation of roads by
+  percentage traffic"), not by safety risk. A busy, well-engineered
+  motorway can carry a large share of national travel while being
+  comparatively safe, while a low-traffic rural secondary road posted above
+  its Safe System range scores high on risk but negligible on travel share.
+  The two metrics measure different things, so near-zero correlation is
+  the expected outcome, and it is reported here rather than masked.
+- **Risk tier distribution**: 79 High risk (0.5%), 5,476 Medium risk
+  (37.6%), 8,991 Low risk among the 14,546 reliable segments (max score
+  observed: 77.9). The small High tier is a feature, not a bug: it is a
+  reviewable priority list for a ministry, not a statistical artifact —
+  every member is posted ≥30 km/h above its Safe System class ceiling with
+  measured speeds far above even that, in high-VRU-exposure areas.
+- **Sensitivity analysis**: 18 valid weight combinations (±0.10 per weight,
   0.05 steps, summing to 1.0) were tested against the baseline top-20%
-  highest-scoring segments. Average overlap: **90.3%** — above the 70%
+  highest-scoring segments. Average overlap: **79.7%** — above the 70%
   threshold, so the score is robust to reasonable weight re-calibration.
 
 ## Map performance trade-off
