@@ -18,6 +18,9 @@ SAFE_SYSTEM_SPEED_RANGES = {
     "unclassified": (20, 40),
 }
 
+SPEED_GAP_FULL_SIGNAL_KMH = 20
+ROAD_MISMATCH_FULL_SIGNAL_KMH = 30
+
 # Fatality-probability lookup for a pedestrian/cyclist struck at a given posted speed.
 BIO_RISK_BANDS = [
     (20, 0.05),
@@ -33,8 +36,9 @@ def compute_speed_gap(gdf):
     """Add speed_gap (F85 minus limit, clipped at 0) and its 0-1 normalised version."""
     gap = gdf["F85thPercentileSpeed"] - gdf["SpeedLimit"]
     gdf["speed_gap"] = gap.clip(lower=0)
-    scaler = MinMaxScaler()
-    gdf["speed_gap_norm"] = scaler.fit_transform(gdf[["speed_gap"]].fillna(0))
+    gdf["speed_gap_norm"] = (
+        gdf["speed_gap"].fillna(0) / SPEED_GAP_FULL_SIGNAL_KMH
+    ).clip(upper=1.0)
     return gdf
 
 
@@ -45,7 +49,9 @@ def compute_road_mismatch(gdf):
     # class ceiling. A limit below the ceiling (e.g. 55 km/h on a secondary
     # road capped at 60) is compliant and scores 0, not a positive value.
     over = (gdf["SpeedLimit"] - class_max).clip(lower=0)
-    gdf["road_mismatch"] = (over / class_max).clip(upper=1.0)
+    gdf["road_mismatch"] = (
+        over / ROAD_MISMATCH_FULL_SIGNAL_KMH
+    ).clip(upper=1.0)
     return gdf
 
 
@@ -98,9 +104,23 @@ def _bio_risk_for_speed(speed):
 
 
 def compute_bio_risk(gdf):
-    """Add bio_risk: speed-based fatality probability multiplied by vru_exposure."""
-    fatality_prob = gdf["SpeedLimit"].map(_bio_risk_for_speed)
+    """Add bio_risk based on actual/posted exposure speed and VRU exposure."""
+    exposure_speed = pd.concat(
+        [gdf["F85thPercentileSpeed"], gdf["SpeedLimit"]], axis=1
+    ).max(axis=1)
+    fatality_prob = exposure_speed.map(_bio_risk_for_speed)
     gdf["bio_risk"] = fatality_prob * gdf["vru_exposure"]
+    return gdf
+
+
+def compute_recommended_speed_limit(gdf):
+    """Add a Safe System recommendation adjusted for local VRU exposure."""
+    ranges = gdf["road_class"].map(SAFE_SYSTEM_SPEED_RANGES)
+    class_min = ranges.map(lambda r: r[0] if isinstance(r, tuple) else np.nan)
+    class_max = ranges.map(lambda r: r[1] if isinstance(r, tuple) else np.nan)
+    recommended = class_min + (class_max - class_min) * (1 - gdf["vru_exposure"])
+    gdf["recommended_speed_limit"] = (recommended / 10).round() * 10
+    gdf["speed_limit_gap"] = gdf["SpeedLimit"] - gdf["recommended_speed_limit"]
     return gdf
 
 
@@ -142,6 +162,7 @@ def engineer_features(gdf, helmet_layers=None, population_rasters=None):
     gdf = compute_road_mismatch(gdf)
     gdf = compute_urban_flag(gdf)
     gdf = compute_vru_exposure(gdf, helmet_layers)
+    gdf = compute_recommended_speed_limit(gdf)
     gdf = compute_bio_risk(gdf)
     gdf = compute_confidence_weight(gdf)
     gdf = compute_mapillary_url(gdf)

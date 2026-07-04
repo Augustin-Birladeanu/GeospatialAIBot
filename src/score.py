@@ -5,12 +5,12 @@ from itertools import product
 import numpy as np
 import pandas as pd
 
-# Baseline weights for the five risk components. Must sum to 1.0.
+# Population receives 15% of the score. The pre-population model's three
+# components retain their relative emphasis within the remaining 85%.
 BASE_WEIGHTS = {
     "speed_gap_norm": 0.25,
-    "road_mismatch": 0.20,
-    "bio_risk": 0.25,
-    "vru_exposure": 0.15,
+    "road_mismatch": 0.25,
+    "bio_risk": 0.35,
     "population_exposure": 0.15,
 }
 
@@ -21,7 +21,7 @@ INSUFFICIENT_DATA_TIER = "Insufficient data"
 def calculate_score(gdf, weights=BASE_WEIGHTS):
     """Return the 0-100 speed_safety_score series for a given set of component weights."""
     weighted_sum = sum(gdf[col] * w for col, w in weights.items())
-    return (weighted_sum * gdf["confidence_weight"] * 100).round(1)
+    return (weighted_sum * 100).round(1)
 
 
 def assign_risk_tier(score):
@@ -37,6 +37,14 @@ def score_and_classify(gdf, weights=BASE_WEIGHTS):
     """Add speed_safety_score and risk_tier columns to a feature-engineered GeoDataFrame."""
     gdf["speed_safety_score"] = calculate_score(gdf, weights)
     gdf["risk_tier"] = assign_risk_tier(gdf["speed_safety_score"])
+    population_weight = weights.get("population_exposure", 0)
+    gdf["population_score_contribution"] = (
+        gdf["population_exposure"] * population_weight * 100
+    ).round(1)
+    gdf["score_without_population"] = (
+        gdf["speed_safety_score"] - gdf["population_score_contribution"]
+    ).clip(lower=0).round(1)
+    gdf["risk_tier_without_population"] = assign_risk_tier(gdf["score_without_population"])
     return gdf
 
 
