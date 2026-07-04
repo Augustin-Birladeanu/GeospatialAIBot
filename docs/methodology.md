@@ -92,6 +92,12 @@ separate, off-by-default "Insufficient data" layer.
   coarse proxy, especially for India, not a precise exposure model. If no
   helmet layer is supplied, the function falls back to `urban_flag` alone
   (see `compute_vru_exposure` in `src/features.py`).
+- **`population_mean`** and **`population_max`** are the mean and maximum
+  population counts in the 100 m raster cells touched by each road segment.
+  **`population_exposure`** applies `log1p` to `population_mean`, divides by
+  the within-country 95th percentile, and clips the result to 0-1. Separate
+  country normalization preserves local variation without letting a few
+  exceptionally dense cells dominate the score.
 - **`bio_risk`** = a fatality-probability lookup on the exposure speed
   `max(F85thPercentileSpeed, SpeedLimit)` (≤20: 0.05, ≤30: 0.10, ≤40: 0.30,
   ≤50: 0.80, ≤60: 0.90, >60: 1.00), multiplied by `vru_exposure`. Using the
@@ -186,9 +192,10 @@ alternate names as "non-Latin").
 
 ```
 speed_safety_score = round(
-    (0.30 * speed_gap_norm
-   + 0.30 * road_mismatch
-   + 0.40 * bio_risk)
+    (0.25 * speed_gap_norm
+   + 0.25 * road_mismatch
+   + 0.35 * bio_risk
+   + 0.15 * population_exposure)
   * 100,
   1
 )
@@ -205,6 +212,9 @@ see "Score recalibration" below):
   and compressed the score's usable range. `bio_risk` gets the largest
   weight because "lethal speeds where unprotected people are" is the core
   Safe System concern; the two limit-misalignment signals split the rest.
+- **`population_exposure` contributes up to 15 points.** The popup reports
+  this contribution, the score without population, and whether population
+  changes the segment's Low/Medium/High tier.
 - **`confidence_weight` does not multiply the score.** Discounting risk for
   data uncertainty made genuinely dangerous long segments invisible. It is
   reported alongside the score as a data-confidence flag instead.
@@ -353,9 +363,9 @@ transient hover and can't keep a selection locked in after the mouse leaves.
   secondary sources (per the Agilysis data guide) and should be treated as
   approximate; `UrbanPC` is the more reliable numeric field, used here.
   These are limitations of the upstream data, not of this pipeline.
-- The VRU exposure proxy relies on regional helmet-wearing surveys, not
-  segment-level pedestrian/cyclist counts — a genuine exposure model (e.g.
-  population density, footfall, school/market proximity) is future work.
+- Population is a residential-exposure proxy, not a direct count of people
+  walking or cycling on a segment. Footfall and school/market proximity
+  would improve this further.
 - This is a rule-based score, not a validated predictive model. See
   `src/train_model.py` for a deliberately unfinished scaffold to take this
   further with real outcome data.

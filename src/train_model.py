@@ -25,6 +25,7 @@ FEATURE_COLUMNS = [
     "road_mismatch",
     "urban_flag",
     "vru_exposure",
+    "population_exposure",
     "bio_risk",
     "confidence_weight",
 ]
