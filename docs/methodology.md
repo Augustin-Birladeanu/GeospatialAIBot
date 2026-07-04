@@ -82,6 +82,12 @@ separate, off-by-default "Insufficient data" layer.
   coarse proxy, especially for India, not a precise exposure model. If no
   helmet layer is supplied, the function falls back to `urban_flag` alone
   (see `compute_vru_exposure` in `src/features.py`).
+- **`population_mean`** and **`population_max`** are the mean and maximum
+  population counts in the 100 m raster cells touched by each road segment.
+  **`population_exposure`** applies `log1p` to `population_mean`, divides by
+  the within-country 95th percentile, and clips the result to 0-1. Separate
+  country normalization preserves local variation without letting a few
+  exceptionally dense cells dominate the score.
 - **`bio_risk`** = a fatality-probability lookup on `SpeedLimit` (≤20: 0.05,
   ≤30: 0.10, ≤40: 0.30, ≤50: 0.80, ≤60: 0.90, >60: 1.00), multiplied by
   `vru_exposure`.
@@ -97,10 +103,11 @@ separate, off-by-default "Insufficient data" layer.
 
 ```
 speed_safety_score = round(
-    (0.30 * speed_gap_norm
-   + 0.25 * road_mismatch
-   + 0.30 * bio_risk
-   + 0.15 * vru_exposure)
+    (0.25 * speed_gap_norm
+   + 0.20 * road_mismatch
+   + 0.25 * bio_risk
+   + 0.15 * vru_exposure
+   + 0.15 * population_exposure)
   * confidence_weight * 100,
   1
 )
@@ -156,9 +163,9 @@ demand.
   secondary sources (per the Agilysis data guide) and should be treated as
   approximate; `UrbanPC` is the more reliable numeric field, used here.
   These are limitations of the upstream data, not of this pipeline.
-- The VRU exposure proxy relies on regional helmet-wearing surveys, not
-  segment-level pedestrian/cyclist counts — a genuine exposure model (e.g.
-  population density, footfall, school/market proximity) is future work.
+- Population is a residential-exposure proxy, not a direct count of people
+  walking or cycling on a segment. Footfall and school/market proximity
+  would improve this further.
 - This is a rule-based score, not a validated predictive model. See
   `src/train_model.py` for a deliberately unfinished scaffold to take this
   further with real outcome data.

@@ -5,12 +5,13 @@ from itertools import product
 import numpy as np
 import pandas as pd
 
-# Baseline weights for the four risk components. Must sum to 1.0.
+# Baseline weights for the five risk components. Must sum to 1.0.
 BASE_WEIGHTS = {
-    "speed_gap_norm": 0.30,
-    "road_mismatch": 0.25,
-    "bio_risk": 0.30,
+    "speed_gap_norm": 0.25,
+    "road_mismatch": 0.20,
+    "bio_risk": 0.25,
     "vru_exposure": 0.15,
+    "population_exposure": 0.15,
 }
 
 RISK_TIER_THRESHOLDS = [(70, "High risk"), (40, "Medium risk")]

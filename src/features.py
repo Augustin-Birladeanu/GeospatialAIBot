@@ -128,8 +128,16 @@ def compute_mapillary_url(gdf):
     return gdf
 
 
-def engineer_features(gdf, helmet_layers=None):
+def engineer_features(gdf, helmet_layers=None, population_rasters=None):
     """Run all feature engineering steps on a reliable-segments GeoDataFrame, in order."""
+    if population_rasters:
+        from .population import add_population_data
+
+        gdf = add_population_data(gdf, population_rasters)
+    elif "population_exposure" not in gdf.columns:
+        gdf["population_mean"] = np.nan
+        gdf["population_max"] = np.nan
+        gdf["population_exposure"] = 0.0
     gdf = compute_speed_gap(gdf)
     gdf = compute_road_mismatch(gdf)
     gdf = compute_urban_flag(gdf)
