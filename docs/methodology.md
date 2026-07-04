@@ -40,6 +40,13 @@ in metres, RoadLength in km, related by an exact ×1000 factor), so
 in the Thailand file; it is rescaled to 0–100 for both before any
 cross-country comparison.
 
+Two supplementary raw inputs were added after the initial challenge exports,
+both used for enrichment/validation rather than the score itself (see the
+relevant sections below for why): `data/raw/Thailandaccident2025.xlsx` (2025
+crash records) and `data/raw/overture_road_names_{india,thailand}.parquet`
+(Overture Maps' current road names, fetched via
+`scripts/fetch_overture_names.py`).
+
 ## Known data anomaly
 
 Some segments report `F85thPercentileSpeed` more than 20 km/h above
@@ -99,6 +106,67 @@ separate, off-by-default "Insufficient data" layer.
   coordinates in `StreetImageLink` (the data guide describes this field as
   endpoint lon/lat pairs, not a sorted bounding box — but centroid averaging
   produces the correct midpoint either way).
+- **`road_name`** = `names_primary` (India) or `english_ro` (Thailand),
+  resolved to English — the two source fields are already in English 94.6%
+  / 99.8% of the time they're populated; the small remainder is romanized
+  (see "Road-name backfill" below). Segments still unnamed after that are
+  backfilled from Overture Maps' own road-name data, and only then fall back
+  to a `"{road_class} segment {segment_id}"` label, so the map never shows a
+  blank identity.
+
+### Road-name backfill
+
+Checking the raw exports directly: only **29.1%** of India's reliable
+segments and **30.5%** of Thailand's have a real name (`names_primary` /
+`english_ro`) — both sparse, and close enough to each other that the
+"India lacks data" impression on the map turns out to be about the crash
+data (next section), not road names specifically.
+
+A live check against Overture Maps' current road data for a Maharashtra
+sample (near Pune) found only ~34% name coverage there too — evidence this
+is a genuine OpenStreetMap/Overture road-naming completeness gap for
+India's minor and rural roads, not a stale or incomplete export. **Most
+unnamed segments have no name in *any* source, in *any* language, because
+the road genuinely was never named** — that's a real-world ceiling no
+amount of data-pulling raises, so full 100% coverage isn't achievable.
+
+Even so, `scripts/fetch_overture_names.py` pulled every currently-named
+`subtype = road` segment from Overture Maps for both countries' bounding
+boxes (198,600 for India, 458,912 for Thailand — server-side filtered to
+named roads only, since an unfiltered full-bbox pull is tens of GB) and
+`src/road_names.py` backfills any segment the raw export left unnamed by
+matching its representative point to the nearest Overture road segment
+within 50m. Result:
+
+| | Reliable segments | Low-confidence segments |
+|---|---|---|
+| India | 29.1% → **32.6%** | 28.2% → **38.4%** |
+| Thailand | 30.5% → **48.9%** | 7.0% → **61.4%** |
+
+**Thailand gained far more from this than India did** — its raw export
+under-captured names that Overture's live data already has, while India's
+low coverage turns out to reflect an actual gap in how India's road network
+is mapped upstream. The backfill widens rather than closes the road-name
+gap between the two countries — reported here rather than glossed over.
+
+**English resolution.** Overture's `primary` name is the *local* name,
+which for India is already Latin-script 98.6% of the time but for Thailand
+is Thai script 86.6% of the time — using it blindly would silently put
+Thai-script names into most backfilled Thailand segments. `src/road_names.py`
+instead resolves each name to English in order: (1) `primary` if already
+Latin-script, (2) Overture's own English-tagged `common` name if present
+(covers ~61% of the Thai segments that need it), (3) a mechanical
+script-to-Latin romanization (pythainlp's Royal Institute romanizer for
+Thai, `indic_transliteration`/ITRANS for Devanagari) as a last resort, with
+a quality gate that rejects results still more than 3% non-Latin characters
+(mixed-script border-area names, tokenizer artifacts) rather than show
+garbled text. Romanization is a phonetic approximation, not an official
+name (e.g. Devanagari's implicit final vowel renders "road" as "Roda"), and
+is applied the same way to the small share of the *raw* export names that
+aren't already English. Net result: of 14,546 reliable segments, only 11
+(0.08%) still show any non-Latin character after this process, and half of
+those are false positives (the check flags a semicolon separating two
+alternate names as "non-Latin").
 - **`recommended_speed_limit`** interpolates within the segment's road-class
   Safe System range (the same `motorway`/`trunk`/.../`unclassified` ranges
   used by `road_mismatch`), pulled toward the class **minimum** as
@@ -194,6 +262,61 @@ VRU exposure — exactly the profile the challenge asks to surface.
   highest-scoring segments. Average overlap: **79.7%** — above the 70%
   threshold, so the score is robust to reasonable weight re-calibration.
 
+## Validation against real 2025 Thailand crash data
+
+`data/raw/Thailandaccident2025.xlsx` (Department of Highways accident log,
+23,715 geocoded 2025 crash records with fatality/injury counts) is the first
+segment-joinable crash outcome data available to this project — the ATO Road
+Safety workbook referenced in `src/train_model.py` is national-level only,
+one row per country per year, and can't validate an individual segment's
+score. See `src/crashes.py` for the join logic.
+
+**This data is used for validation and map enrichment, not folded into the
+weighted score.** The score's components are deliberately built on absolute
+anchors (20 km/h gap, 30 km/h over-ceiling, fixed bio-risk bands) specifically
+so a score means the same thing in India and Thailand. Crash records exist
+for Thailand only; adding them as a scoring term would make Thailand's
+formula structurally different from India's, undermining that guarantee for
+a country the pipeline hasn't even reached yet. Instead this data answers a
+question the score couldn't previously answer for itself: *does the score
+actually track where crashes happen?*
+
+**Method**: each crash point is matched to its nearest Thailand road segment
+within 300m (`EPSG:32647`, metric CRS). 171 of 23,715 records have
+unrecoverable coordinates (outside Thailand's bounding box — e.g. one record
+reports `LATITUDE` > 100) and are dropped. Of the remaining 23,544, **20,758
+(88.2%) matched** a reliable segment, and 4,653 of Thailand's 11,524 reliable
+segments (40.4%) have at least one matched 2025 crash.
+
+**Result: the score does not predict crash frequency, but it does predict
+crash severity** — and that split is consistent with what the score was
+designed to measure. Raw linear correlation between `speed_safety_score` and
+crash rate per km is effectively zero (**-0.02**), same conclusion as the
+existing `RankedPercentile` check: how *often* a crash happens on a segment
+is driven mostly by traffic volume and exposure, which the score doesn't
+model. But mean outcome rates by risk tier tell a different story:
+
+| Risk tier | Crashes/km | Killed-or-serious/km | Fatalities/km | Fatal or serious, given a crash happened |
+|---|---|---|---|---|
+| High risk | 0.42 | **0.24** | **0.19** | **56%** |
+| Medium risk | 0.40 | 0.10 | 0.05 | 30% |
+| Low risk | 0.44 | 0.09 | 0.04 | 29% |
+
+High-risk segments have roughly **4x the fatality rate per km** and nearly
+**3x the killed-or-seriously-injured rate per km** of Medium/Low-risk
+segments, despite near-identical raw crash frequency across all three tiers.
+Put another way: a crash on a High-risk segment is about twice as likely to
+be fatal or serious as a crash anywhere else. This is exactly the mechanism
+`bio_risk` is built around (fatality probability at the exposure speed,
+scaled by VRU exposure) — the score was never meant to predict *how many*
+crashes happen, only *how survivable* one is when it does. See
+`data/processed/_crash_validation_summary.json` for the full numbers and
+`notebooks/04_exports_and_map.ipynb` for the computation.
+
+The map's Thailand segment popups show each segment's 2025 crash count and
+fatality/KSI counts directly, so this evidence is visible per-segment, not
+just in aggregate.
+
 ## Map performance trade-off
 
 Embedding all ~70,000 segments (reliable + low-confidence) in one Folium
@@ -201,9 +324,28 @@ HTML file at full geometry/attribute fidelity produced a 61MB file —
 impractical for GitHub Pages and slow to pan/zoom in a browser. The
 low-confidence ("Insufficient data") layer is therefore: (a) simplified more
 aggressively (0.0015° tolerance vs. 0.0003° for scored segments), (b) given a
-minimal tooltip with no popup, and (c) off by default via the layer control.
-This brought the file to ~30MB while keeping every segment inspectable on
-demand.
+minimal tooltip (Folium's plain fields/aliases mechanism — one shared render
+template, no per-feature markup) with no popup, and (c) off by default via
+the layer control.
+
+Reliable segments' hover tooltip and click popup are custom HTML cards (road
+name, risk badge, full metric breakdown, and — for Thailand — 2025 crash
+counts) rather than the default field table. An early version of this built
+each card with inline CSS repeated per feature, which alone pushed the file
+to 107MB — over GitHub's 100MB per-file push limit. Moving all styling into
+one shared `<style>` block (referenced by CSS class, not repeated inline)
+brought it back down to **~53MB** while keeping the low-confidence layer's
+plain fields/aliases tooltip untouched, since that layer's 55,000+ segments
+made it the more size-sensitive of the two.
+
+Hovering or clicking a segment highlights it in a color reserved
+specifically for interaction state (cyan on hover, violet once clicked,
+locked until another segment is clicked) — distinct from the red/orange/
+green/gray risk-tier palette, so the highlighted segment is unambiguous
+regardless of which tier it belongs to. This is implemented as plain Leaflet
+event handlers (`window.attachSegmentInteractivity` in the generated HTML)
+rather than Folium's built-in `highlight_function`, which only supports
+transient hover and can't keep a selection locked in after the mouse leaves.
 
 ## Limitations
 
@@ -217,3 +359,8 @@ demand.
 - This is a rule-based score, not a validated predictive model. See
   `src/train_model.py` for a deliberately unfinished scaffold to take this
   further with real outcome data.
+- The 2025 Thailand crash validation covers one country and one year, and the
+  300m nearest-segment match is an approximation in dense urban road networks
+  (a crash could be logged against the wrong nearby carriageway). It's real
+  evidence that the score tracks severity, not proof, and it says nothing
+  about India, where no comparable segment-level crash data exists yet.

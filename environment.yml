@@ -22,3 +22,6 @@ dependencies:
   - pip:
       - osmnx==1.7.1
       - branca==0.7.0
+      - overturemaps==1.0.1
+      - pythainlp==5.3.4
+      - indic-transliteration==2.3.82
