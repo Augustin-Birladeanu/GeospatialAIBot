@@ -152,8 +152,6 @@ def compute_bio_risk(gdf):
     fatality_prob = exposure_speed.map(_bio_risk_for_speed)
     gdf["bio_risk"] = fatality_prob * gdf["vru_exposure"]
     return gdf
-
-
 def compute_confidence_weight(gdf):
     """Add confidence_weight: 0.5 for segments longer than 10km, else 1.0.
 
@@ -184,8 +182,16 @@ def compute_mapillary_url(gdf):
     return gdf
 
 
-def engineer_features(gdf, helmet_layers=None):
+def engineer_features(gdf, helmet_layers=None, population_rasters=None):
     """Run all feature engineering steps on a reliable-segments GeoDataFrame, in order."""
+    if population_rasters:
+        from .population import add_population_data
+
+        gdf = add_population_data(gdf, population_rasters)
+    elif "population_exposure" not in gdf.columns:
+        gdf["population_mean"] = np.nan
+        gdf["population_max"] = np.nan
+        gdf["population_exposure"] = 0.0
     gdf = compute_speed_gap(gdf)
     gdf = compute_road_mismatch(gdf)
     gdf = compute_urban_flag(gdf)

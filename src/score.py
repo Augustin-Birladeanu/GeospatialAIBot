@@ -5,16 +5,18 @@ from itertools import product
 import numpy as np
 import pandas as pd
 
-# Baseline weights for the three risk components. Must sum to 1.0.
+# Population receives 15% of the score. The calibrated pre-population model
+# retains its relative emphasis within the remaining 85%.
 # vru_exposure is no longer a separate term: it already scales bio_risk
 # (consequence x exposure), and carrying it twice both double-counted the
 # signal and compressed the score's usable range. bio_risk gets the largest
 # weight because "lethal speeds where unprotected people are" is the core
 # Safe System concern; the two limit-misalignment signals split the rest.
 BASE_WEIGHTS = {
-    "speed_gap_norm": 0.30,
-    "road_mismatch": 0.30,
-    "bio_risk": 0.40,
+    "speed_gap_norm": 0.25,
+    "road_mismatch": 0.25,
+    "bio_risk": 0.35,
+    "population_exposure": 0.15,
 }
 
 RISK_TIER_THRESHOLDS = [(70, "High risk"), (40, "Medium risk")]
@@ -46,6 +48,14 @@ def score_and_classify(gdf, weights=BASE_WEIGHTS):
     """Add speed_safety_score and risk_tier columns to a feature-engineered GeoDataFrame."""
     gdf["speed_safety_score"] = calculate_score(gdf, weights)
     gdf["risk_tier"] = assign_risk_tier(gdf["speed_safety_score"])
+    population_weight = weights.get("population_exposure", 0)
+    gdf["population_score_contribution"] = (
+        gdf["population_exposure"] * population_weight * 100
+    ).round(1)
+    gdf["score_without_population"] = (
+        gdf["speed_safety_score"] - gdf["population_score_contribution"]
+    ).clip(lower=0).round(1)
+    gdf["risk_tier_without_population"] = assign_risk_tier(gdf["score_without_population"])
     return gdf
 
 

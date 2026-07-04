@@ -32,6 +32,8 @@ System principles and vulnerable road user (VRU) exposure, combining:
 - **How exposed vulnerable road users are** on that segment (urban
   context plus regional helmet-wearing data, as a proxy for two-wheeler
   vulnerability).
+- **How many people live along the segment**, derived from 100 m population
+  rasters for Maharashtra and Thailand.
 
 The result is a 0–100 **Speed Safety Score** per segment, a High/Medium/Low
 risk tier, a **recommended speed limit** (interpolated within the segment's
@@ -42,7 +44,7 @@ street-level imagery for context — surfacing candidate roads for speed
 limit review by policymakers.
 
 This is a transparent, hand-weighted scoring formula, not a trained
-predictive model — every score is traceable back to the four inputs above.
+predictive model — every score is traceable back to the five inputs above.
 See `docs/methodology.md` for the full reasoning, the data-quality issues
 found along the way, and an honest discussion of where the score's
 validation came back weaker than expected.
@@ -62,6 +64,8 @@ committed to this repo — see `.gitignore`):
 
 - `data/raw/ADB_Innovation_Maharashtra.geojson`
 - `data/raw/ADB_Innovation_Thailand.geojson`
+- `data/raw/maharasthra_india_population_data.tif`
+- `data/raw/tha_pop_2025_CN_100m_R2025A_v1.tif`
 
 The VRU exposure feature also expects the helmet-wearing survey GeoPackages
 under `Archive/` (see Data sources below).
@@ -134,14 +138,14 @@ ai4saferroads/
 - **Helmet-wearing / motorcycle exposure**: regional survey results provided
   in `Archive/*.gpkg` (Boundaries_4helmet for Maharashtra,
   Thailand_Province_Boundaries for Thailand), used as a VRU exposure proxy.
+- **Population exposure**: 2025 100 m population-count GeoTIFFs for
+  Maharashtra and Thailand, supplied with the challenge data.
 - **Street-level imagery**: [Mapillary](https://www.mapillary.com/), linked
   per segment via `mapillary_url`.
 - **Data dictionary**: *"AI for Safer Roads 2026 — Description of data
   sources"*, Richard Owen / Agilysis, May 2026 (PDF included in this repo).
 
-Some datasets referenced in early planning (population density, school/market
-proximity) are available only through the competition under NDA and are not
-yet integrated — see Future Enhancements below.
+School/market proximity data remains future work.
 
 Full methodology, including how the two countries' differing data schemas
 were reconciled and a discussion of the validation results: see
@@ -164,9 +168,7 @@ needs segment- or province-level crash data, which hasn't been located yet.
 
 ## Future enhancements
 
-- Population density, school proximity, and market proximity layers (once
-  available) to sharpen the `vru_exposure` feature beyond the current
-  urban-flag + helmet-wearing proxy.
+- School and market proximity layers to further sharpen local exposure.
 - A trained model validated against real outcome data (crash/fatality
   records), rather than the current rule-based score.
 - Cross-country model transfer to additional Asia-Pacific countries.
