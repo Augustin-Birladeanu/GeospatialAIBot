@@ -22,3 +22,4 @@ dependencies:
   - pip:
       - osmnx==1.7.1
       - branca==0.7.0
+      - overturemaps==1.0.1
