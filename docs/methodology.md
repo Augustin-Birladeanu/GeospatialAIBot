@@ -40,6 +40,13 @@ in metres, RoadLength in km, related by an exact ×1000 factor), so
 in the Thailand file; it is rescaled to 0–100 for both before any
 cross-country comparison.
 
+Two supplementary raw inputs were added after the initial challenge exports,
+both used for enrichment/validation rather than the score itself (see the
+relevant sections below for why): `data/raw/Thailandaccident2025.xlsx` (2025
+crash records) and `data/raw/overture_road_names_{india,thailand}.parquet`
+(Overture Maps' current road names, fetched via
+`scripts/fetch_overture_names.py`).
+
 ## Known data anomaly
 
 Some segments report `F85thPercentileSpeed` more than 20 km/h above
@@ -99,11 +106,67 @@ separate, off-by-default "Insufficient data" layer.
   coordinates in `StreetImageLink` (the data guide describes this field as
   endpoint lon/lat pairs, not a sorted bounding box — but centroid averaging
   produces the correct midpoint either way).
-- **`road_name`** = `names_primary` (India) or `english_ro` (Thailand) —
-  the two source files' equivalent free-text road-name fields, both sparsely
-  populated. Segments with neither field set fall back to a
-  `"{road_class} segment {segment_id}"` label so the map never shows a blank
-  identity.
+- **`road_name`** = `names_primary` (India) or `english_ro` (Thailand),
+  resolved to English — the two source fields are already in English 94.6%
+  / 99.8% of the time they're populated; the small remainder is romanized
+  (see "Road-name backfill" below). Segments still unnamed after that are
+  backfilled from Overture Maps' own road-name data, and only then fall back
+  to a `"{road_class} segment {segment_id}"` label, so the map never shows a
+  blank identity.
+
+### Road-name backfill
+
+Checking the raw exports directly: only **29.1%** of India's reliable
+segments and **30.5%** of Thailand's have a real name (`names_primary` /
+`english_ro`) — both sparse, and close enough to each other that the
+"India lacks data" impression on the map turns out to be about the crash
+data (next section), not road names specifically.
+
+A live check against Overture Maps' current road data for a Maharashtra
+sample (near Pune) found only ~34% name coverage there too — evidence this
+is a genuine OpenStreetMap/Overture road-naming completeness gap for
+India's minor and rural roads, not a stale or incomplete export. **Most
+unnamed segments have no name in *any* source, in *any* language, because
+the road genuinely was never named** — that's a real-world ceiling no
+amount of data-pulling raises, so full 100% coverage isn't achievable.
+
+Even so, `scripts/fetch_overture_names.py` pulled every currently-named
+`subtype = road` segment from Overture Maps for both countries' bounding
+boxes (198,600 for India, 458,912 for Thailand — server-side filtered to
+named roads only, since an unfiltered full-bbox pull is tens of GB) and
+`src/road_names.py` backfills any segment the raw export left unnamed by
+matching its representative point to the nearest Overture road segment
+within 50m. Result:
+
+| | Reliable segments | Low-confidence segments |
+|---|---|---|
+| India | 29.1% → **32.6%** | 28.2% → **38.4%** |
+| Thailand | 30.5% → **48.9%** | 7.0% → **61.4%** |
+
+**Thailand gained far more from this than India did** — its raw export
+under-captured names that Overture's live data already has, while India's
+low coverage turns out to reflect an actual gap in how India's road network
+is mapped upstream. The backfill widens rather than closes the road-name
+gap between the two countries — reported here rather than glossed over.
+
+**English resolution.** Overture's `primary` name is the *local* name,
+which for India is already Latin-script 98.6% of the time but for Thailand
+is Thai script 86.6% of the time — using it blindly would silently put
+Thai-script names into most backfilled Thailand segments. `src/road_names.py`
+instead resolves each name to English in order: (1) `primary` if already
+Latin-script, (2) Overture's own English-tagged `common` name if present
+(covers ~61% of the Thai segments that need it), (3) a mechanical
+script-to-Latin romanization (pythainlp's Royal Institute romanizer for
+Thai, `indic_transliteration`/ITRANS for Devanagari) as a last resort, with
+a quality gate that rejects results still more than 3% non-Latin characters
+(mixed-script border-area names, tokenizer artifacts) rather than show
+garbled text. Romanization is a phonetic approximation, not an official
+name (e.g. Devanagari's implicit final vowel renders "road" as "Roda"), and
+is applied the same way to the small share of the *raw* export names that
+aren't already English. Net result: of 14,546 reliable segments, only 11
+(0.08%) still show any non-Latin character after this process, and half of
+those are false positives (the check flags a semicolon separating two
+alternate names as "non-Latin").
 - **`recommended_speed_limit`** interpolates within the segment's road-class
   Safe System range (the same `motorway`/`trunk`/.../`unclassified` ranges
   used by `road_mismatch`), pulled toward the class **minimum** as
