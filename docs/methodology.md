@@ -40,13 +40,6 @@ in metres, RoadLength in km, related by an exact ×1000 factor), so
 in the Thailand file; it is rescaled to 0–100 for both before any
 cross-country comparison.
 
-Two supplementary raw inputs were added after the initial challenge exports,
-both used for enrichment/validation rather than the score itself (see the
-relevant sections below for why): `data/raw/Thailandaccident2025.xlsx` (2025
-crash records) and `data/raw/overture_road_names_{india,thailand}.parquet`
-(Overture Maps' current road names, fetched via
-`scripts/fetch_overture_names.py`).
-
 ## Known data anomaly
 
 Some segments report `F85thPercentileSpeed` more than 20 km/h above
@@ -108,43 +101,9 @@ separate, off-by-default "Insufficient data" layer.
   produces the correct midpoint either way).
 - **`road_name`** = `names_primary` (India) or `english_ro` (Thailand) —
   the two source files' equivalent free-text road-name fields, both sparsely
-  populated. Segments with neither field set are backfilled from Overture
-  Maps' own road-name data (see "Road-name backfill" below) before finally
-  falling back to a `"{road_class} segment {segment_id}"` label, so the map
-  never shows a blank identity.
-
-### Road-name backfill
-
-Checking the raw exports directly: only **29.2%** of India's reliable
-segments and **30.6%** of Thailand's have a real name (`names_primary` /
-`english_ro`) — both sparse, and close enough to each other that the
-"India lacks data" impression on the map turns out to be about the crash
-data (next section), not road names specifically.
-
-A live check against Overture Maps' current road data for a Maharashtra
-sample (near Pune) found only ~34% name coverage there too — evidence this
-is a genuine OpenStreetMap/Overture road-naming completeness gap for
-India's minor and rural roads, not a stale or incomplete export. Even so,
-`scripts/fetch_overture_names.py` pulled every currently-named `subtype
-= road` segment from Overture Maps for both countries' bounding boxes
-(198,600 for India, 458,912 for Thailand — server-side filtered to named
-roads only, since an unfiltered full-bbox pull is tens of GB) and
-`src/road_names.py` backfills any segment the raw export left unnamed by
-matching its representative point to the nearest Overture road segment
-within 50m. Result:
-
-| | Reliable segments | Low-confidence segments |
-|---|---|---|
-| India | 29.2% → **32.6%** | 28.3% → **38.4%** |
-| Thailand | 30.6% → **48.9%** | 7.0% → **61.5%** |
-
-**Thailand gained far more from this than India did** — its raw export
-under-captured names that Overture's live data already has, while India's
-low coverage turns out to reflect an actual gap in how India's road network
-is mapped upstream (OpenStreetMap contributions concentrate more in
-Thailand's mapped areas than in rural Maharashtra). The backfill is real
-and worth keeping, but it widens rather than closes the road-name gap
-between the two countries — reported here rather than glossed over.
+  populated. Segments with neither field set fall back to a
+  `"{road_class} segment {segment_id}"` label so the map never shows a blank
+  identity.
 - **`recommended_speed_limit`** interpolates within the segment's road-class
   Safe System range (the same `motorway`/`trunk`/.../`unclassified` ranges
   used by `road_mismatch`), pulled toward the class **minimum** as

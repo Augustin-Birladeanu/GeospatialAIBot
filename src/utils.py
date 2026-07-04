@@ -75,13 +75,8 @@ def harmonize_schema(gdf, country):
     # class + id label rather than a blank/NaN in the UI.
     name_col = _first_present(gdf, ROAD_NAME_ALIASES)
     road_name = gdf[name_col] if name_col else pd.Series(pd.NA, index=gdf.index)
-    has_name = road_name.notna() & (road_name.astype(str).str.strip() != "")
     fallback = gdf["road_class"].fillna("Road") + " segment " + gdf["segment_id"]
-    gdf["road_name"] = road_name.where(has_name, fallback)
-    # Flags which segments got the generated label rather than a real source
-    # name, so a later step (see src/road_names.py) knows which ones are
-    # worth trying to backfill from an external name source.
-    gdf["road_name_is_fallback"] = ~has_name
+    gdf["road_name"] = road_name.where(road_name.notna() & (road_name.astype(str).str.strip() != ""), fallback)
 
     size_col = _first_present(gdf, SAMPLE_SIZE_ALIASES)
     gdf["Sample_Size_Total"] = pd.to_numeric(gdf[size_col], errors="coerce")
