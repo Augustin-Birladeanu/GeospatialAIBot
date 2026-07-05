@@ -1,0 +1,29 @@
+# Pip equivalent of environment.yml. Conda is still the recommended install
+# path (see README) since fiona/gdal-based packages can be painful to build
+# from source with pip, especially on Windows.
+geopandas==0.14.*
+pandas==2.1.*
+numpy==1.26.*
+shapely==2.1.*
+fiona==1.9.*
+pyproj==3.6.*
+folium==0.15.*
+matplotlib==3.8.*
+seaborn==0.13.*
+jupyter==1.0.*
+contextily==1.4.*
+rasterstats==0.19.*
+scikit-learn==1.3.*
+scipy==1.11.*
+requests==2.31.*
+openpyxl==3.1.*
+osmnx==1.7.1
+branca==0.7.0
+overturemaps==1.0.1
+pythainlp==5.3.4
+indic-transliteration==2.3.82
+
+# Used by src/road_names.py and scripts/fetch_overture_names.py (Parquet
+# I/O) but not listed explicitly in environment.yml, where it comes in
+# transitively via overturemaps/geopandas.
+pyarrow
