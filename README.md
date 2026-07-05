@@ -138,8 +138,29 @@ ai4saferroads/
 - **Helmet-wearing / motorcycle exposure**: regional survey results provided
   in `Archive/*.gpkg` (Boundaries_4helmet for Maharashtra,
   Thailand_Province_Boundaries for Thailand), used as a VRU exposure proxy.
-- **Population exposure**: 2025 100 m population-count GeoTIFFs for
-  Maharashtra and Thailand, supplied with the challenge data.
+- **Population exposure**: 2025 100 m population-count GeoTIFFs from
+  [WorldPop](https://hub.worldpop.org/) — [Thailand](https://hub.worldpop.org/geodata/summary?id=75663),
+  [India](https://hub.worldpop.org/geodata/summary?id=73807) — CC-BY 4.0.
+  Bondarenko M., Priyatikanto R., Tejedor-Garavito N., Zhang W., McKeen T.,
+  Cunningham A., Woods T., Hilton J., Cihan D., Nosatiuk B., Brinkhoff T.,
+  Tatem A., Sorichetta A. 2025. *Constrained estimates of 2015-2030 total
+  number of people per grid square at a resolution of 3 arc (~100m at the
+  equator), R2025A v1.* Global Demographic Data Project, funded by The Bill
+  and Melinda Gates Foundation (INV-045237). WorldPop — School of Geography
+  and Environmental Science, University of Southampton.
+  DOI:[10.5258/SOTON/WP00839](https://doi.org/10.5258/SOTON/WP00839).
+- **2025 Thailand crash records**: Department of Highways accident log
+  (`data/raw/Thailandaccident2025.xlsx`), 23,715 geocoded 2025 crash reports
+  with fatality/injury counts, used to validate the Speed Safety Score
+  against real crash outcomes rather than as a scoring input (Thailand-only
+  data — see `docs/methodology.md` for why it isn't folded into the
+  weighted score itself). Joined to segments via `src/crashes.py`.
+- **Road names**: [Overture Maps Foundation](https://overturemaps.org/)
+  (© OpenStreetMap contributors, Overture Maps Foundation, ODbL licence),
+  fetched via `scripts/fetch_overture_names.py` and used in
+  `src/road_names.py` to backfill segments the raw exports left unnamed,
+  resolved to English wherever possible. Supplements, not a replacement
+  for, the raw exports' own `names_primary` / `english_ro` fields.
 - **Street-level imagery**: [Mapillary](https://www.mapillary.com/), linked
   per segment via `mapillary_url`.
 - **Data dictionary**: *"AI for Safer Roads 2026 — Description of data
